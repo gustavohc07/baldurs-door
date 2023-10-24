@@ -21,17 +21,27 @@ data PlayerCommand = Attack | Flee
 -- Monster have stat block - which is the statistics of a monster.
     -- Type
     -- Armor Class
+    -- Size
+      -- data Size = Tiny | Small | Medium | Large | Huge | Gargantuan deriving (Show)
+    -- Hp
     -- Attributes
     -- Skills
-    -- Hp
     -- Challenge (amount of exp and how hard is the monster)
 
-data Monster = Monster { monsterHp :: Int, monsterArmorClass :: Int } deriving (Show)
+data Monster = Monster { name :: Text, statBlock :: StatBlock } deriving (Show)
+
+data StatBlock = StatBlock { hp :: Int, armorClass :: Int } deriving (Show)
 
 data Player = Player { playerHp :: Int, playerArmorClass :: Int } deriving (Show)
 
 initialGameState :: GameState
-initialGameState = GameState { player = Player { playerHp = 100, playerArmorClass = 12 }, monster = Monster { monsterHp = 80, monsterArmorClass = 8 }, fstRound = True }
+initialGameState = GameState {
+  player = Player { playerHp = 100, playerArmorClass = 12 }
+, monster = Monster { name = "Rat", statBlock = initialStatBlock }
+, fstRound = True }
+
+initialStatBlock :: StatBlock
+initialStatBlock = StatBlock { hp = 80, armorClass = 8 }
 
 -- Fight Rendering
 
@@ -49,16 +59,24 @@ getPlayerCommand :: IO Text
 getPlayerCommand =
   T.pack <$> getLine
 
-roundMessage :: Bool -> String
-roundMessage fstRound =
+roundMessage :: Text -> Bool -> String
+roundMessage monsterName fstRound =
   if fstRound then
-    "You just found a giant rat and it is ready to attack you! What would you do? (A)ttack, (F)lee?"
+    "You just found a " ++ T.unpack monsterName ++ " and it is ready to attack you! What would you do? (A)ttack, (F)lee?"
   else
-    "The Rat is still alive! You are weak... Should you (A)ttack or (F)lee?"
+    "The " ++ T.unpack monsterName ++ " is still alive! You are weak... Should you (A)ttack or (F)lee?"
+
+monsterHp :: Monster -> Int
+monsterHp monster =
+  hp (statBlock monster)
+
+monsterAc :: Monster -> Int
+monsterAc monster =
+  armorClass (statBlock monster)
 
 fightStep :: GameState -> IO (GameState, FightResult)
 fightStep g@GameState { player, monster, fstRound } =
-  putStrLn (roundMessage fstRound) *>
+  putStrLn (roundMessage (name monster) fstRound) *>
   do
     mPlayerCommand <- parsePlayerCommand <$> getPlayerCommand
     case mPlayerCommand of
@@ -66,18 +84,18 @@ fightStep g@GameState { player, monster, fstRound } =
         -- Generating random numbers (rolls, attacks)
         playerAttackRoll <- rollDie D20
         monsterAttackRoll <- rollDie D20
-        playerAttackDamage <- damageRoll (attackRoll (monsterArmorClass monster) playerAttackRoll)
-        monsterAttackDamage <- damageRoll (attackRoll (playerArmorClass player) monsterAttackRoll)
+        playerDamageRoll <- damageRoll (attackRoll (monsterAc monster) playerAttackRoll)
+        monsterDamageRoll <- damageRoll (attackRoll (playerArmorClass player) monsterAttackRoll)
 
-        let monsterHp' = monsterHp monster - playerAttackDamage
-        let playerHp' = playerHp player - monsterAttackDamage
+        let monsterHp' = monsterHp monster - playerDamageRoll
+        let playerHp' = playerHp player - monsterDamageRoll
 
         -- Printing
-        putStrLn ("You hit " ++ show playerAttackDamage ++ "!")
-        putStrLn ("Rat hit you " ++ show monsterAttackDamage ++ "!")
+        putStrLn ("You hit " ++ show playerDamageRoll ++ "!")
+        putStrLn ("Rat hit you " ++ show monsterDamageRoll ++ "!")
         putStrLn ("Giant Rat HP: " ++ show monsterHp' ++ " VS. " ++ "Player HP: " ++ show playerHp' ++ "\n")
 
-        pure $ someFnName g monsterHp' playerHp'
+        pure $ computeBattleState g monsterHp' playerHp'
       Just Flee -> do
         putStrLn "Coward. While running you steped into a rock, fell, banged your head, and died."
         pure (g { player = player {playerHp = 0} , fstRound = False }, Died)
@@ -86,14 +104,13 @@ fightStep g@GameState { player, monster, fstRound } =
         fightStep g
 
 
-someFnName :: GameState -> Int -> Int -> (GameState, FightResult)
-someFnName g monsterHp playerHp
+computeBattleState :: GameState -> Int -> Int -> (GameState, FightResult)
+computeBattleState g@GameState { player, monster } monsterHp playerHp
   | monsterHp > 0 && playerHp > 0 =
-    (g { monster = (monster g) { monsterHp = monsterHp }, player = (player g) { playerHp = playerHp }, fstRound = False }, Fighting)
+    (g { monster = monster { statBlock = (statBlock monster) { hp = monsterHp } }, player = player { playerHp = playerHp }, fstRound = False }, Fighting)
   | monsterHp <= 0 && playerHp > 0 =
-    (g { monster = (monster g) { monsterHp = monsterHp }, fstRound = False }, Win)
+    (g { monster =  monster { statBlock = (statBlock monster) { hp = monsterHp } }, fstRound = False }, Win)
   | otherwise = (g, Died)
-
 
 fightLoop :: GameState -> IO FightResult
 fightLoop gs = do
@@ -110,10 +127,8 @@ renderFightResult :: FightResult -> String
 renderFightResult = \case
     Win ->
       "You win!"
-
     Died ->
       "You got yourself kicked in the arse by a rat. What a loser."
-
     Fighting ->
       "This should not happen. Blame the developer"
 
@@ -154,7 +169,7 @@ damageRoll = \case
   CriticalFailure ->
     pure 0
 
-data AttackOutcome = CriticalSuccess | CriticalFailure | RegularAttack | Miss
+data AttackOutcome = CriticalSuccess | CriticalFailure | RegularAttack | Miss deriving Show
 
 attackRoll :: Int -> Int -> AttackOutcome
 attackRoll targetAc roll
